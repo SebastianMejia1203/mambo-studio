@@ -1,0 +1,22 @@
+bin/
+obj/
+artifacts/
+.vs/
+*.user
+*.mp4
+*.screenstudio
+*.studio
+
+# Archivos temporales, ajustes privados y contenido del usuario
+*_wpftmp.csproj
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+*.pem
+*.wav
+*.log
+*.logs
+*.bak

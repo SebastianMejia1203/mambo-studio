@@ -1,0 +1,87 @@
+using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using ScreenStudio;
+using ScreenStudio.Models;
+using ScreenStudio.UI;
+using ScreenStudio.Controls;
+using ScreenStudio.Services;
+internal static partial class Program
+{
+    private static async Task NewPanelChecks()
+    {
+        var project = await StudioProject.LoadAsync(Path.Combine(directory,"motion.studio"));
+        var preferences = new StudioPreferences { LeftTabs=["Archivos"],RightTabs=["Inspector","Movimiento","Apariencia","Lienzo","Captura"] };
+        var window = new MainWindow(preferences,Path.Combine(directory,"feature-ui-preferences.json"));
+        window.Editing.Change(p => { p.Name=project.Name; p.Width=project.Width; p.Height=project.Height; p.Padding=project.Padding; p.Background=project.Background; p.BackgroundEnd=project.BackgroundEnd; p.GradientBackground=true; p.Library=project.Library; p.Tracks=project.Tracks; });
+        var timeline = (TimelineControl)window.FindName("Timeline"); timeline.SelectedClipId=project.Clips.First().Id; timeline.SelectedTrackId=project.Tracks[0].Id;
+        await window.RefreshAsync(); window.Seek(1.1); await window.ExecuteAsync("panelright:Movimiento"); Render(window,1440,930,"studio-cursor.png");
+        var right = (Border)window.FindName("RightHost");
+        var amount = Descendants(right).OfType<TextBox>().Single(t => t.Parent is StackPanel s && s.Children[0] is TextBlock label && label.Text == "Aumento · 1–4×"); amount.Text="1,6";
+        amount.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,0,amount,window) { RoutedEvent=System.Windows.Input.Keyboard.LostKeyboardFocusEvent });
+        var toolbar = (ToolBar)window.FindName("ToolBar");
+        for (var i=0;i<200 && !toolbar.Items.OfType<Button>().First().IsEnabled;i++) await Task.Delay(50);
+        Check(Math.Abs(window.Editing.Project.Clips.First().Effects.Zoom-1.6)<.001,"motion sidebar applies editable zoom intensity");
+        var show=Descendants(right).OfType<CheckBox>().Single(c=>c.Content?.ToString()=="Mostrar cursor");
+        var clicks=Descendants(right).OfType<CheckBox>().Single(c=>c.Content?.ToString()=="Resaltar clics");
+        var mode=Descendants(right).OfType<ComboBox>().Single();
+        var surface=((Canvas)window.FindName("Stage")).Children.OfType<ClipSurface>().Single();
+        show.IsChecked=false;
+        Check(!window.Editing.Project.Clips.First().Effects.ShowCursor && !surface.Effects.ShowCursor,"unchecking cursor immediately removes the preview overlay without Apply");
+        clicks.IsChecked=false;
+        Check(!window.Editing.Project.Clips.First().Effects.ShowClicks && !surface.Effects.ShowClicks,"unchecking highlights immediately updates the preview without Apply");
+        mode.SelectedIndex=0;
+        Check(surface.Frame.Zoom==1 && window.Editing.Project.Clips.First().Effects.Follow==FollowMode.Off,"selecting no zoom immediately resets the preview camera");
+        show.IsChecked=true; clicks.IsChecked=true; mode.SelectedIndex=1;
+        Check(surface.Effects.ShowCursor && surface.Effects.ShowClicks && surface.Frame.Zoom>1,"effects can be re-enabled immediately on the same recording");
+        timeline.PixelsPerSecond=220; Render(window,1440,930,"studio-effects-timeline.png");
+        var current=window.Editing.Project.Clips.First(); var trace=window.Editing.Project.Library[0].Cursor;
+        var clickSelection=new EffectSelection(current.Id,"click",EffectCues.Clicks(current,trace).Single().Id);
+        var zoomSelection=new EffectSelection(current.Id,"zoom",EffectCues.Zooms(current,trace).Single().Id);
+        Check(timeline.EffectBounds(clickSelection) is {} clickBounds && timeline.EffectBounds(zoomSelection) is {} zoomBounds && zoomBounds.Y>clickBounds.Y,"timeline exposes separate click markers and zoom intervals");
+        timeline.SelectedEffect=zoomSelection; await window.ExecuteAsync("panelright:Movimiento"); Render(window,1440,930,"studio-selected-zoom.png");
+        var cueStart=Descendants(right).OfType<TextBox>().Single(t=>t.Parent is StackPanel s && s.Children[0] is TextBlock label && label.Text=="Posición en el proyecto · segundos");
+        var cueDuration=Descendants(right).OfType<TextBox>().Single(t=>t.Parent is StackPanel s && s.Children[0] is TextBlock label && label.Text=="Duración del zoom · segundos");
+        cueStart.Text="0,2"; cueDuration.Text="0,5";
+        cueDuration.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,0,cueDuration,window) { RoutedEvent=System.Windows.Input.Keyboard.LostKeyboardFocusEvent });
+        Check(current.Effects.ZoomCues?.Single() is { Start:.2,Duration:.5 } && surface.Frame.Zoom==1,"editing a selected zoom changes its interval and current preview");
+        var mediaCount=window.Editing.Project.Clips.Count(); await window.ExecuteAsync("delete");
+        Check(current.Effects.ZoomCues?.Count==0 && window.Editing.Project.Clips.Count()==mediaCount,"deleting a selected timeline effect preserves the video clip");
+        await window.ExecuteAsync("undo");
+        Check(window.Editing.Project.Clips.First().Effects.ZoomCues?.Count==1,"undo restores the deleted zoom interval");
+        timeline.SelectedEffect=null;
+        await window.ExecuteAsync("panelright:Inspector"); Render(window,1440,930,"studio-inspector.png");
+        var speedBox = Descendants(right).OfType<TextBox>().Single(t => t.Parent is StackPanel s && s.Children[0] is TextBlock label && label.Text == "Velocidad · %"); speedBox.Text = "200";
+        speedBox.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,0,speedBox,window) { RoutedEvent=System.Windows.Input.Keyboard.LostKeyboardFocusEvent });
+        for (var i=0;i<200 && !toolbar.Items.OfType<Button>().First().IsEnabled;i++) await Task.Delay(50);
+        Check(Math.Abs(window.Editing.Project.Clips.First().Speed - 2) < .001,"inspector speed applies automatically without an Apply button");
+        await window.ExecuteAsync("rangein");
+        Check(window.Editing.Project.ExportIn > 0,"export range start follows the playhead");
+        await window.ExecuteAsync("rangeclear");
+        Check(window.Editing.Project.ExportIn == 0 && window.Editing.Project.ExportOut == 0,"export range clears on demand");
+        Render(window,1440,930,"studio-keyframes.png");
+        var addKey = Descendants(right).OfType<Button>().Single(b => b.ToolTip?.ToString() == "Fija opacidad en la posición del cabezal");
+        addKey.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        for (var i=0;i<200 && !toolbar.Items.OfType<Button>().First().IsEnabled;i++) await Task.Delay(50);
+        Check(window.Editing.Project.Clips.First().OpacityKeys.Count == 1,"keyframes are added at the playhead without an Apply button");
+        await window.ExecuteAsync("panelright:Apariencia"); Render(window,1440,930,"studio-appearance.png");
+        var radius = Descendants(right).OfType<TextBox>().Single(t => t.Parent is StackPanel s && s.Children[0] is TextBlock label && label.Text == "Esquinas redondeadas · px"); radius.Text = "13";
+        radius.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,0,radius,window) { RoutedEvent=System.Windows.Input.Keyboard.LostKeyboardFocusEvent });
+        for (var i=0;i<200 && !toolbar.Items.OfType<Button>().First().IsEnabled;i++) await Task.Delay(50);
+        Check(Math.Abs(window.Editing.Project.Clips.First().Effects.CornerRadius - 13) < .001,"appearance fields apply automatically without an Apply button");
+        await window.ExecuteAsync("panelright:Captura"); Render(window,1440,930,"studio-capture.png");
+        var micCheck = Descendants(right).OfType<CheckBox>().Single(c => c.Content?.ToString() == "Grabar micrófono");
+        micCheck.IsChecked = !(micCheck.IsChecked == true);
+        Check(StudioPreferences.Load(Path.Combine(directory,"feature-ui-preferences.json")).Capture.Microphone == (micCheck.IsChecked == true),"capture source settings persist automatically without Apply");
+        Check(Descendants(right).OfType<ComboBox>().Any(c => c.Items.Count > 0),"device lists populate automatically without manual refresh");
+        window.Show(); await Task.Delay(1500); window.UpdateLayout();
+        Check(Descendants(right).OfType<Image>().Any(i => i.Source != null && i.Parent is Grid),"capture source preview goes live without manual refresh");
+        for (var i=0;i<300 && !toolbar.Items.OfType<Button>().First().IsEnabled;i++) await Task.Delay(50);
+        Check(toolbar.Items.OfType<Button>().First().IsEnabled,"device enumeration completes without starting a recording");
+        await window.ExecuteAsync("panelright:Movimiento"); Render(window,1440,930,"studio-cursor.png");
+        await window.ExecuteAsync("light"); Render(window,1440,930,"studio-library-light.png");
+        var library = Descendants((Border)window.FindName("LeftHost")).OfType<MediaLibraryView>().Single();
+        Check(library.VisibleAssets.Count == 1 && Descendants(library).OfType<Image>().Any(),"library renders a real source thumbnail with cursor metadata badge");
+    }
+}
+
